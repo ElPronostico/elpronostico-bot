@@ -1,4 +1,6 @@
 import os
+import hmac
+import hashlib
 import json
 import smtplib
 import logging
@@ -35,10 +37,14 @@ TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 # Helpers
 # ---------------------------------------------------------------------------
 
-def verify_api_key(data: dict) -> bool:
-    """Verifica que el webhook viene de PayHip comparando el API Key."""
-    received = data.get("key") or data.get("api_key", "")
-    return received == PAYHIP_API_KEY
+def verify_signature(raw_body: bytes, received_sig: str) -> bool:
+    """Verifica la firma HMAC-SHA256 del webhook de PayHip."""
+    expected = hmac.new(
+        PAYHIP_API_KEY.encode("utf-8"),
+        raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(expected, received_sig)
 
 
 def create_invite_link() -> str:
@@ -141,43 +147,46 @@ def notify_admin(buyer_name: str, buyer_email: str, product: str, amount: str) -
 
 @app.route("/webhook/payhip", methods=["POST"])
 def payhip_webhook():
-    # --- DEBUG TEMPORAL: log completo de headers y body ---
-    raw_body = request.get_data(as_text=True)
-    log.info("=== WEBHOOK DEBUG HEADERS ===")
-    for header, value in request.headers:
-        log.info("  %s: %s", header, value)
-    log.info("=== WEBHOOK DEBUG BODY ===")
-    log.info("  RAW: %s", raw_body)
-    try:
-        data = request.get_json(force=True) or {}
-        log.info("  JSON: %s", data)
-    except Exception:
-        data = {}
-        log.info("  (body no es JSON válido)")
-    log.info("=== FIN DEBUG ===")
-    # --- FIN DEBUG (quitar verificación temporalmente) ---
+    raw_body = request.get_data()
 
-    # PayHip usa el campo "type" o "event"; aceptamos ambos
-    event = data.get("type") or data.get("event", "")
-    if event not in ("sale", "payment_completed", ""):
-        log.info("Evento ignorado: %s", event)
+    try:
+        data = json.loads(raw_body)
+    except json.JSONDecodeError:
+        return jsonify({"error": "JSON inválido"}), 400
+
+    # 1. Verificar tipo de evento
+    if data.get("type") != "paid":
+        log.info("Evento ignorado: %s", data.get("type"))
         return jsonify({"status": "ignored"}), 200
 
-    buyer_email  = data.get("buyer_email", "")
-    buyer_name   = data.get("buyer_name", "Cliente")
+    # 2. Verificar firma HMAC-SHA256
+    received_sig = data.get("signature", "")
+    if not verify_signature(raw_body, received_sig):
+        log.warning("Firma inválida — esperado: %s | recibido: %s",
+                    hmac.new(PAYHIP_API_KEY.encode(), raw_body, hashlib.sha256).hexdigest(),
+                    received_sig)
+        return jsonify({"error": "Firma inválida"}), 401
+
+    log.info("Webhook verificado: %s", data)
+
+    # 3. Extraer datos del comprador
+    buyer_email  = data.get("email", "")
+    buyer_name   = data.get("name") or data.get("buyer_name", "Cliente")
     product_name = data.get("product_name", "El Pronóstico VIP")
     amount       = data.get("amount", "")
     currency     = data.get("currency", "")
 
     if not buyer_email:
-        log.error("No se recibió buyer_email en el payload")
-        return jsonify({"error": "buyer_email requerido"}), 400
+        log.error("No se recibió email en el payload")
+        return jsonify({"error": "email requerido"}), 400
 
     try:
+        # 4. Crear enlace y enviar al comprador
         invite_link = create_invite_link()
         log.info("Enlace creado para %s: %s", buyer_email, invite_link)
-
         send_email(buyer_email, buyer_name, invite_link)
+
+        # 5. Notificar al admin
         notify_admin(buyer_name, buyer_email, product_name, f"{amount} {currency}")
 
         return jsonify({"status": "ok", "invite_link": invite_link}), 200
