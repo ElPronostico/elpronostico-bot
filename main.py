@@ -1,12 +1,11 @@
 import os
 import json
-import smtplib
 import logging
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from flask import Flask, request, jsonify
 import requests
 from dotenv import load_dotenv
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
 
 load_dotenv()
 
@@ -18,14 +17,11 @@ log = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-BOT_TOKEN     = os.getenv("BOT_TOKEN")
-CHANNEL_ID    = os.getenv("CHANNEL_ID")
-ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")   # tu ID personal de Telegram (opcional)
-
-SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER = os.getenv("SMTP_USER", "")
-SMTP_PASS = os.getenv("SMTP_PASS", "")
+BOT_TOKEN        = os.getenv("BOT_TOKEN")
+CHANNEL_ID       = os.getenv("CHANNEL_ID")
+ADMIN_CHAT_ID    = os.getenv("ADMIN_CHAT_ID")   # tu ID personal de Telegram (opcional)
+SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
+EMAIL_FROM       = os.getenv("EMAIL_FROM", "")
 
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
@@ -53,15 +49,10 @@ def create_invite_link() -> str:
 
 
 def send_email(to_email: str, buyer_name: str, invite_link: str) -> None:
-    """Envía el enlace de invitación al email del comprador."""
-    if not SMTP_USER or not SMTP_PASS:
-        log.warning("SMTP no configurado — enlace para %s: %s", to_email, invite_link)
+    """Envía el enlace de invitación al email del comprador vía SendGrid."""
+    if not SENDGRID_API_KEY or not EMAIL_FROM:
+        log.warning("SendGrid no configurado — enlace para %s: %s", to_email, invite_link)
         return
-
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = "¡Bienvenido/a al Canal VIP de El Pronóstico! 🏆"
-    msg["From"]    = f"El Pronóstico <{SMTP_USER}>"
-    msg["To"]      = to_email
 
     plain = f"""Hola {buyer_name},
 
@@ -147,16 +138,17 @@ El Pronóstico
 </html>
 """
 
-    msg.attach(MIMEText(plain, "plain", "utf-8"))
-    msg.attach(MIMEText(html,  "html",  "utf-8"))
+    message = Mail(
+        from_email=(EMAIL_FROM, "El Pronóstico"),
+        to_emails=to_email,
+        subject="¡Bienvenido/a al Canal VIP de El Pronóstico! 🏆",
+        plain_text_content=plain,
+        html_content=html,
+    )
 
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-        server.ehlo()
-        server.starttls()
-        server.login(SMTP_USER, SMTP_PASS)
-        server.sendmail(SMTP_USER, to_email, msg.as_string())
-
-    log.info("Email enviado a %s", to_email)
+    sg = SendGridAPIClient(SENDGRID_API_KEY)
+    response = sg.send(message)
+    log.info("Email enviado a %s — status %s", to_email, response.status_code)
 
 
 def notify_admin(buyer_name: str, buyer_email: str, product: str, amount: str) -> None:
