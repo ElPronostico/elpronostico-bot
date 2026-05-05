@@ -170,6 +170,51 @@ def notify_admin(buyer_name: str, buyer_email: str, product: str, amount: str) -
 
 
 # ---------------------------------------------------------------------------
+# Registro de miembros del canal VIP
+# La API de Telegram no permite listar miembros directamente;
+# los registramos aquí cuando se unen vía el update chat_member.
+# ---------------------------------------------------------------------------
+
+MEMBERS_FILE = "members.json"
+
+
+def load_members() -> list:
+    try:
+        with open(MEMBERS_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
+def save_members(members: list) -> None:
+    with open(MEMBERS_FILE, "w") as f:
+        json.dump(members, f)
+
+
+def get_bot_id() -> int:
+    resp = requests.get(f"{TELEGRAM_API}/getMe", timeout=10)
+    return resp.json()["result"]["id"]
+
+
+def kick_member(user_id: int) -> bool:
+    """Expulsa a un usuario del canal sin banearlo permanentemente."""
+    ban = requests.post(
+        f"{TELEGRAM_API}/banChatMember",
+        json={"chat_id": CHANNEL_ID, "user_id": user_id},
+        timeout=10,
+    )
+    if not ban.json().get("ok"):
+        return False
+    # Desbanear de inmediato para que pueda volver a unirse si se le da un nuevo enlace
+    requests.post(
+        f"{TELEGRAM_API}/unbanChatMember",
+        json={"chat_id": CHANNEL_ID, "user_id": user_id, "only_if_banned": True},
+        timeout=10,
+    )
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
@@ -221,6 +266,87 @@ def payhip_webhook():
     except Exception as exc:
         log.exception("Error procesando webhook: %s", exc)
         return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/webhook/telegram", methods=["POST"])
+def telegram_webhook():
+    update = request.get_json(force=True) or {}
+
+    # --- Registrar entradas/salidas del canal VIP ---
+    cm = update.get("chat_member")
+    if cm and str(cm.get("chat", {}).get("id")) == str(CHANNEL_ID):
+        user    = cm.get("new_chat_member", {}).get("user", {})
+        status  = cm.get("new_chat_member", {}).get("status", "")
+        user_id = user.get("id")
+        if user_id:
+            members = load_members()
+            if status == "member" and user_id not in members:
+                members.append(user_id)
+                save_members(members)
+                log.info("Miembro registrado: %s", user_id)
+            elif status in ("left", "kicked") and user_id in members:
+                members.remove(user_id)
+                save_members(members)
+                log.info("Miembro eliminado del registro: %s", user_id)
+
+    # --- Manejar comandos del bot ---
+    message   = update.get("message", {})
+    text      = message.get("text", "")
+    sender_id = str(message.get("from", {}).get("id", ""))
+
+    if text.startswith("/limpiar"):
+        if sender_id != str(ADMIN_CHAT_ID):
+            log.warning("Comando /limpiar rechazado — remitente: %s", sender_id)
+            return jsonify({"ok": True}), 200
+
+        members = load_members()
+        bot_id  = get_bot_id()
+        excluir = {str(ADMIN_CHAT_ID), str(bot_id)}
+
+        kicked = 0
+        failed = 0
+        for uid in members:
+            if str(uid) in excluir:
+                continue
+            if kick_member(uid):
+                kicked += 1
+            else:
+                failed += 1
+
+        save_members([])
+
+        resumen = f"🧹 Canal limpiado.\n✅ {kicked} miembro(s) eliminado(s)."
+        if failed:
+            resumen += f"\n⚠️ {failed} no pudo(ieron) eliminarse (ya habían salido o eran admins)."
+
+        requests.post(
+            f"{TELEGRAM_API}/sendMessage",
+            json={"chat_id": ADMIN_CHAT_ID, "text": resumen},
+            timeout=10,
+        )
+        log.info("/limpiar ejecutado: %s eliminados, %s fallidos", kicked, failed)
+
+    return jsonify({"ok": True}), 200
+
+
+@app.route("/setup-webhook", methods=["GET"])
+def setup_webhook():
+    """Registra el webhook de Telegram. Ejecutar una sola vez tras desplegar.
+    Uso: GET /setup-webhook?url=https://tuservidor.com
+    """
+    server_url = request.args.get("url", "").rstrip("/")
+    if not server_url:
+        return jsonify({"error": "Parámetro requerido: ?url=https://tuservidor.com"}), 400
+
+    resp = requests.post(
+        f"{TELEGRAM_API}/setWebhook",
+        json={
+            "url": f"{server_url}/webhook/telegram",
+            "allowed_updates": ["message", "chat_member"],
+        },
+        timeout=10,
+    )
+    return jsonify(resp.json()), 200
 
 
 @app.route("/health", methods=["GET"])
