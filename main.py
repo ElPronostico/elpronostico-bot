@@ -1,6 +1,4 @@
 import os
-import hmac
-import hashlib
 import json
 import smtplib
 import logging
@@ -22,7 +20,7 @@ app = Flask(__name__)
 
 BOT_TOKEN     = os.getenv("BOT_TOKEN")
 CHANNEL_ID    = os.getenv("CHANNEL_ID")
-PAYHIP_SECRET = os.getenv("PAYHIP_SECRET")
+PAYHIP_API_KEY = os.getenv("PAYHIP_API_KEY")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")   # tu ID personal de Telegram (opcional)
 
 SMTP_HOST = os.getenv("SMTP_HOST", "smtp-mail.outlook.com")
@@ -37,14 +35,10 @@ TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 # Helpers
 # ---------------------------------------------------------------------------
 
-def verify_signature(raw_body: bytes, signature: str) -> bool:
-    """Verifica que el webhook viene realmente de PayHip."""
-    expected = hmac.new(
-        PAYHIP_SECRET.encode("utf-8"),
-        raw_body,
-        hashlib.sha256,
-    ).hexdigest()
-    return hmac.compare_digest(expected, signature)
+def verify_api_key(data: dict) -> bool:
+    """Verifica que el webhook viene de PayHip comparando el API Key."""
+    received = data.get("key") or data.get("api_key", "")
+    return received == PAYHIP_API_KEY
 
 
 def create_invite_link() -> str:
@@ -147,17 +141,14 @@ def notify_admin(buyer_name: str, buyer_email: str, product: str, amount: str) -
 
 @app.route("/webhook/payhip", methods=["POST"])
 def payhip_webhook():
-    raw_body  = request.get_data()
-    signature = request.headers.get("X-Payhip-Signature", "")
-
-    if not verify_signature(raw_body, signature):
-        log.warning("Firma inválida recibida")
-        return jsonify({"error": "Firma inválida"}), 401
-
     try:
-        data = json.loads(raw_body)
-    except json.JSONDecodeError:
+        data = request.get_json(force=True) or {}
+    except Exception:
         return jsonify({"error": "JSON inválido"}), 400
+
+    if not verify_api_key(data):
+        log.warning("API Key inválido en webhook")
+        return jsonify({"error": "API Key inválido"}), 401
 
     log.info("Webhook recibido: %s", data)
 
