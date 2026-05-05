@@ -37,14 +37,13 @@ TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 # Helpers
 # ---------------------------------------------------------------------------
 
-def verify_signature(raw_body: bytes, received_sig: str) -> bool:
-    """Verifica la firma HMAC-SHA256 del webhook de PayHip."""
-    expected = hmac.new(
+def compute_signature(body_bytes: bytes) -> str:
+    """Calcula HMAC-SHA256 del body usando el API Key como secreto."""
+    return hmac.new(
         PAYHIP_API_KEY.encode("utf-8"),
-        raw_body,
+        body_bytes,
         hashlib.sha256,
     ).hexdigest()
-    return hmac.compare_digest(expected, received_sig)
 
 
 def create_invite_link() -> str:
@@ -147,6 +146,7 @@ def notify_admin(buyer_name: str, buyer_email: str, product: str, amount: str) -
 
 @app.route("/webhook/payhip", methods=["POST"])
 def payhip_webhook():
+    # Leer raw body antes de cualquier parseo
     raw_body = request.get_data()
 
     try:
@@ -160,11 +160,17 @@ def payhip_webhook():
         return jsonify({"status": "ignored"}), 200
 
     # 2. Verificar firma HMAC-SHA256
+    # PayHip calcula la firma ANTES de añadir el campo "signature" al body,
+    # así que hay que excluirlo para reproducir el mismo cálculo.
     received_sig = data.get("signature", "")
-    if not verify_signature(raw_body, received_sig):
-        log.warning("Firma inválida — esperado: %s | recibido: %s",
-                    hmac.new(PAYHIP_API_KEY.encode(), raw_body, hashlib.sha256).hexdigest(),
-                    received_sig)
+    data_sin_sig = {k: v for k, v in data.items() if k != "signature"}
+    body_a_firmar = json.dumps(data_sin_sig, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    expected_sig  = compute_signature(body_a_firmar)
+
+    log.info("Body firmado: %s", body_a_firmar.decode())
+    log.info("Firma esperada: %s | recibida: %s", expected_sig, received_sig)
+
+    if not hmac.compare_digest(expected_sig, received_sig):
         return jsonify({"error": "Firma inválida"}), 401
 
     log.info("Webhook verificado: %s", data)
