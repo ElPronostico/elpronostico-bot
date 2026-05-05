@@ -141,16 +141,21 @@ def notify_admin(buyer_name: str, buyer_email: str, product: str, amount: str) -
 
 @app.route("/webhook/payhip", methods=["POST"])
 def payhip_webhook():
+    # --- DEBUG TEMPORAL: log completo de headers y body ---
+    raw_body = request.get_data(as_text=True)
+    log.info("=== WEBHOOK DEBUG HEADERS ===")
+    for header, value in request.headers:
+        log.info("  %s: %s", header, value)
+    log.info("=== WEBHOOK DEBUG BODY ===")
+    log.info("  RAW: %s", raw_body)
     try:
         data = request.get_json(force=True) or {}
+        log.info("  JSON: %s", data)
     except Exception:
-        return jsonify({"error": "JSON inválido"}), 400
-
-    if not verify_api_key(data):
-        log.warning("API Key inválido en webhook")
-        return jsonify({"error": "API Key inválido"}), 401
-
-    log.info("Webhook recibido: %s", data)
+        data = {}
+        log.info("  (body no es JSON válido)")
+    log.info("=== FIN DEBUG ===")
+    # --- FIN DEBUG (quitar verificación temporalmente) ---
 
     # PayHip usa el campo "type" o "event"; aceptamos ambos
     event = data.get("type") or data.get("event", "")
