@@ -22,7 +22,7 @@ BOT_TOKEN     = os.getenv("BOT_TOKEN")
 CHANNEL_ID    = os.getenv("CHANNEL_ID")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")   # tu ID personal de Telegram (opcional)
 
-SMTP_HOST = os.getenv("SMTP_HOST", "smtp-mail.outlook.com")
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER = os.getenv("SMTP_USER", "")
 SMTP_PASS = os.getenv("SMTP_PASS", "")
@@ -59,42 +59,90 @@ def send_email(to_email: str, buyer_name: str, invite_link: str) -> None:
         return
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = "Tu acceso al Canal VIP — El Pronóstico ✅"
-    msg["From"]    = SMTP_USER
+    msg["Subject"] = "¡Bienvenido/a al Canal VIP de El Pronóstico! 🏆"
+    msg["From"]    = f"El Pronóstico <{SMTP_USER}>"
     msg["To"]      = to_email
 
-    plain = f"""
-Hola {buyer_name},
+    plain = f"""Hola {buyer_name},
 
-Gracias por tu compra. Aquí está tu enlace de acceso al Canal VIP de El Pronóstico:
+¡Gracias por unirte a El Pronóstico VIP!
 
-{invite_link}
+Tu acceso exclusivo al canal de Telegram está listo. Usa el enlace de abajo para unirte ahora:
 
-⚠️ Este enlace es de un solo uso. Úsalo para unirte al canal y guárdalo.
+  {invite_link}
 
-¡Bienvenido/a!
+IMPORTANTE: Este enlace es personal y de un solo uso. No lo compartas.
+
+Dentro del canal encontrarás:
+  • Pronósticos diarios con análisis detallado
+  • Picks seleccionados con alto valor
+  • Actualizaciones en tiempo real
+
+Si tienes cualquier problema para acceder, responde a este email y te ayudamos de inmediato.
+
+¡Mucha suerte y bienvenido/a al equipo!
+
 El Pronóstico
 """
 
     html = f"""
 <html>
-<body style="font-family:Arial,sans-serif;max-width:600px;margin:auto;padding:20px">
-  <h2 style="color:#0088cc">¡Bienvenido/a al Canal VIP!</h2>
-  <p>Hola <strong>{buyer_name}</strong>,</p>
-  <p>Gracias por tu compra. Haz clic en el botón para unirte al
-  <strong>Canal VIP de El Pronóstico</strong>:</p>
-  <p style="text-align:center;margin:30px 0">
-    <a href="{invite_link}"
-       style="background:#0088cc;color:#fff;padding:14px 28px;
-              text-decoration:none;border-radius:8px;font-size:16px">
-      Unirse al Canal VIP
-    </a>
-  </p>
-  <p style="color:#888;font-size:13px">
-    ⚠️ Este enlace es de un solo uso. Si tienes problemas, contáctanos.
-  </p>
-  <p>¡Buena suerte con tus pronósticos!<br>
-  <strong>El Pronóstico</strong></p>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:auto;padding:0;background:#f5f5f5">
+  <div style="background:#0088cc;padding:30px 20px;text-align:center">
+    <h1 style="color:#fff;margin:0;font-size:26px">El Pronóstico</h1>
+    <p style="color:#cce8ff;margin:6px 0 0">Canal VIP de Pronósticos</p>
+  </div>
+
+  <div style="background:#fff;padding:32px 28px">
+    <h2 style="color:#0088cc;margin-top:0">¡Bienvenido/a, {buyer_name}! 🏆</h2>
+
+    <p style="font-size:15px;color:#333;line-height:1.6">
+      Gracias por confiar en <strong>El Pronóstico</strong>. Tu acceso VIP está
+      activado y listo para usar. Haz clic en el botón para unirte al canal
+      de Telegram ahora mismo:
+    </p>
+
+    <p style="text-align:center;margin:32px 0">
+      <a href="{invite_link}"
+         style="background:#0088cc;color:#fff;padding:16px 36px;
+                text-decoration:none;border-radius:8px;font-size:17px;
+                font-weight:bold;display:inline-block">
+        Unirse al Canal VIP →
+      </a>
+    </p>
+
+    <hr style="border:none;border-top:1px solid #eee;margin:28px 0">
+
+    <p style="font-size:14px;color:#555;line-height:1.7">
+      Dentro del canal encontrarás:
+    </p>
+    <ul style="font-size:14px;color:#333;line-height:2">
+      <li>Pronósticos diarios con análisis detallado</li>
+      <li>Picks seleccionados con alto valor</li>
+      <li>Actualizaciones en tiempo real</li>
+    </ul>
+
+    <p style="font-size:13px;color:#e05c00;background:#fff5ee;
+              padding:12px 16px;border-radius:6px;border-left:4px solid #e05c00">
+      ⚠️ <strong>Enlace de un solo uso.</strong> Es personal e intransferible.
+      No lo compartas con nadie.
+    </p>
+
+    <p style="font-size:14px;color:#555;margin-top:24px">
+      ¿Problemas para acceder? Responde a este email y te ayudamos enseguida.
+    </p>
+
+    <p style="font-size:15px;color:#333;margin-top:28px">
+      ¡Mucha suerte!<br>
+      <strong style="color:#0088cc">El Pronóstico</strong>
+    </p>
+  </div>
+
+  <div style="background:#f0f0f0;padding:16px;text-align:center">
+    <p style="font-size:12px;color:#999;margin:0">
+      Has recibido este email porque realizaste una compra en El Pronóstico.
+    </p>
+  </div>
 </body>
 </html>
 """
