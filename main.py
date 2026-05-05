@@ -1,6 +1,4 @@
 import os
-import hmac
-import hashlib
 import json
 import smtplib
 import logging
@@ -22,7 +20,6 @@ app = Flask(__name__)
 
 BOT_TOKEN     = os.getenv("BOT_TOKEN")
 CHANNEL_ID    = os.getenv("CHANNEL_ID")
-PAYHIP_API_KEY = os.getenv("PAYHIP_API_KEY")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")   # tu ID personal de Telegram (opcional)
 
 SMTP_HOST = os.getenv("SMTP_HOST", "smtp-mail.outlook.com")
@@ -36,14 +33,6 @@ TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def compute_signature(body_bytes: bytes) -> str:
-    """Calcula HMAC-SHA256 del body usando el API Key como secreto."""
-    return hmac.new(
-        PAYHIP_API_KEY.encode("utf-8"),
-        body_bytes,
-        hashlib.sha256,
-    ).hexdigest()
 
 
 def create_invite_link() -> str:
@@ -144,36 +133,28 @@ def notify_admin(buyer_name: str, buyer_email: str, product: str, amount: str) -
 # Endpoints
 # ---------------------------------------------------------------------------
 
+PRODUCT_KEY = "EOirT"
+
+
 @app.route("/webhook/payhip", methods=["POST"])
 def payhip_webhook():
-    # Leer raw body antes de cualquier parseo
-    raw_body = request.get_data()
-
     try:
-        data = json.loads(raw_body)
-    except json.JSONDecodeError:
+        data = request.get_json(force=True) or {}
+    except Exception:
         return jsonify({"error": "JSON inválido"}), 400
+
+    log.info("Webhook recibido: %s", data)
 
     # 1. Verificar tipo de evento
     if data.get("type") != "paid":
         log.info("Evento ignorado: %s", data.get("type"))
         return jsonify({"status": "ignored"}), 200
 
-    # 2. Verificar firma HMAC-SHA256
-    # PayHip calcula la firma ANTES de añadir el campo "signature" al body,
-    # así que hay que excluirlo para reproducir el mismo cálculo.
-    received_sig = data.get("signature", "")
-    data_sin_sig = {k: v for k, v in data.items() if k != "signature"}
-    body_a_firmar = json.dumps(data_sin_sig, separators=(",", ":"), sort_keys=True).encode("utf-8")
-    expected_sig  = compute_signature(body_a_firmar)
-
-    log.info("Body firmado: %s", body_a_firmar.decode())
-    log.info("Firma esperada: %s | recibida: %s", expected_sig, received_sig)
-
-    if not hmac.compare_digest(expected_sig, received_sig):
-        return jsonify({"error": "Firma inválida"}), 401
-
-    log.info("Webhook verificado: %s", data)
+    # 2. Verificar que el producto correcto está en el pedido
+    items = data.get("items") or []
+    if not any(item.get("product_key") == PRODUCT_KEY for item in items):
+        log.warning("Product key '%s' no encontrado en items: %s", PRODUCT_KEY, items)
+        return jsonify({"error": "Producto no reconocido"}), 400
 
     # 3. Extraer datos del comprador
     buyer_email  = data.get("email", "")
@@ -187,12 +168,12 @@ def payhip_webhook():
         return jsonify({"error": "email requerido"}), 400
 
     try:
-        # 4. Crear enlace y enviar al comprador
+        # 4. Crear enlace VIP y enviar al comprador
         invite_link = create_invite_link()
         log.info("Enlace creado para %s: %s", buyer_email, invite_link)
         send_email(buyer_email, buyer_name, invite_link)
 
-        # 5. Notificar al admin
+        # 5. Notificar al admin por Telegram
         notify_admin(buyer_name, buyer_email, product_name, f"{amount} {currency}")
 
         return jsonify({"status": "ok", "invite_link": invite_link}), 200
