@@ -17,11 +17,12 @@ log = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-BOT_TOKEN        = os.getenv("BOT_TOKEN")
-CHANNEL_ID       = os.getenv("CHANNEL_ID")
-ADMIN_CHAT_ID    = os.getenv("ADMIN_CHAT_ID")   # tu ID personal de Telegram (opcional)
-SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
-EMAIL_FROM       = os.getenv("EMAIL_FROM", "")
+BOT_TOKEN          = os.getenv("BOT_TOKEN")
+CHANNEL_ID         = os.getenv("CHANNEL_ID")         # canal VIP
+PUBLIC_CHANNEL_ID  = os.getenv("PUBLIC_CHANNEL_ID")  # canal público gratuito
+ADMIN_CHAT_ID      = os.getenv("ADMIN_CHAT_ID")
+SENDGRID_API_KEY   = os.getenv("SENDGRID_API_KEY")
+EMAIL_FROM         = os.getenv("EMAIL_FROM", "")
 
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
@@ -214,6 +215,41 @@ def kick_member(user_id: int) -> bool:
     return True
 
 
+def ejecutar_limpiar() -> str:
+    """Expulsa a todos los miembros del canal VIP excepto admin y bot. Devuelve resumen."""
+    members = load_members()
+    bot_id  = get_bot_id()
+    excluir = {str(ADMIN_CHAT_ID), str(bot_id)}
+
+    kicked = 0
+    failed = 0
+    for uid in members:
+        if str(uid) in excluir:
+            continue
+        if kick_member(uid):
+            kicked += 1
+        else:
+            failed += 1
+
+    save_members([])
+    log.info("Canal VIP limpiado: %s eliminados, %s fallidos", kicked, failed)
+
+    resumen = f"🧹 Canal VIP limpiado: {kicked} miembro(s) eliminado(s)."
+    if failed:
+        resumen += f" ({failed} no pudieron eliminarse.)"
+    return resumen
+
+
+def send_channel_message(chat_id: str, text: str) -> bool:
+    """Envía un mensaje a un canal. Devuelve True si tuvo éxito."""
+    resp = requests.post(
+        f"{TELEGRAM_API}/sendMessage",
+        json={"chat_id": chat_id, "text": text},
+        timeout=10,
+    )
+    return resp.json().get("ok", False)
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -294,37 +330,73 @@ def telegram_webhook():
     text      = message.get("text", "")
     sender_id = str(message.get("from", {}).get("id", ""))
 
+    # Solo el admin puede ejecutar cualquier comando
+    if text.startswith("/") and sender_id != str(ADMIN_CHAT_ID):
+        log.warning("Comando rechazado de user %s: %s", sender_id, text.split()[0])
+        return jsonify({"ok": True}), 200
+
     if text.startswith("/limpiar"):
-        if sender_id != str(ADMIN_CHAT_ID):
-            log.warning("Comando /limpiar rechazado — remitente: %s", sender_id)
-            return jsonify({"ok": True}), 200
-
-        members = load_members()
-        bot_id  = get_bot_id()
-        excluir = {str(ADMIN_CHAT_ID), str(bot_id)}
-
-        kicked = 0
-        failed = 0
-        for uid in members:
-            if str(uid) in excluir:
-                continue
-            if kick_member(uid):
-                kicked += 1
-            else:
-                failed += 1
-
-        save_members([])
-
-        resumen = f"🧹 Canal limpiado.\n✅ {kicked} miembro(s) eliminado(s)."
-        if failed:
-            resumen += f"\n⚠️ {failed} no pudo(ieron) eliminarse (ya habían salido o eran admins)."
-
+        resumen = ejecutar_limpiar()
         requests.post(
             f"{TELEGRAM_API}/sendMessage",
-            json={"chat_id": ADMIN_CHAT_ID, "text": resumen},
+            json={"chat_id": ADMIN_CHAT_ID, "text": f"🧹 {resumen}"},
             timeout=10,
         )
-        log.info("/limpiar ejecutado: %s eliminados, %s fallidos", kicked, failed)
+
+    elif text.startswith("/ganamosgratis"):
+        if not PUBLIC_CHANNEL_ID:
+            requests.post(
+                f"{TELEGRAM_API}/sendMessage",
+                json={"chat_id": ADMIN_CHAT_ID,
+                      "text": "❌ PUBLIC_CHANNEL_ID no configurado en .env"},
+                timeout=10,
+            )
+            return jsonify({"ok": True}), 200
+
+        msg_publico = (
+            "🏆 ¡¡HEMOS GANADO!!\n"
+            "⚽ Pronóstico acertado\n"
+            "📈 Otra victoria para El Pronóstico\n"
+            "🙏 Gracias por confiar en nosotros\n"
+            "💎 ¿Quieres acceso VIP con análisis premium?\n"
+            "👉 https://payhip.com/b/EOirT"
+        )
+        ok = send_channel_message(PUBLIC_CHANNEL_ID, msg_publico)
+
+        confirmacion = (
+            "✅ Mensaje de victoria enviado al canal público."
+            if ok else
+            "❌ Error al enviar al canal público. Verifica que el bot sea admin del canal."
+        )
+        requests.post(
+            f"{TELEGRAM_API}/sendMessage",
+            json={"chat_id": ADMIN_CHAT_ID, "text": confirmacion},
+            timeout=10,
+        )
+        log.info("/ganamosgratis ejecutado — ok: %s", ok)
+
+    elif text.startswith("/ganamosvip"):
+        msg_vip = (
+            "🏆 ¡¡HEMOS GANADO VIP!!\n"
+            "⚽ Pronóstico acertado\n"
+            "📈 Otra victoria para El Pronóstico\n"
+            "🙏 Gracias por confiar en nosotros\n"
+            "💎 Seguimos ganando juntos"
+        )
+        ok = send_channel_message(CHANNEL_ID, msg_vip)
+
+        resumen_limpiar = ejecutar_limpiar()
+
+        confirmacion = (
+            f"{'✅ Mensaje VIP enviado.' if ok else '❌ Error al enviar al canal VIP.'}\n"
+            f"{resumen_limpiar}"
+        )
+        requests.post(
+            f"{TELEGRAM_API}/sendMessage",
+            json={"chat_id": ADMIN_CHAT_ID, "text": confirmacion},
+            timeout=10,
+        )
+        log.info("/ganamosvip ejecutado — ok: %s", ok)
 
     return jsonify({"ok": True}), 200
 
